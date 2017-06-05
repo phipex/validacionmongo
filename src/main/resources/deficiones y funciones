@@ -1,0 +1,213 @@
+//comando para ingresar los cartones, se deben ingresar sin comilla doble
+mongoimport --db bingo --collection modulos --file todastablas.csv --type csv --headerline
+
+db.getCollection('figuras').insert(db.getCollection('figuras_temp').aggregate([
+    {
+       $group:{
+           _id:"$figura_nm_pk",
+           idFigura: { $max: "$nm_pk"},
+           posiciones: { $addToSet: "$posiciones_nm_pk"},
+           nombre: { $max: "$vr_nombre"},
+           casillas: { $max: "$nm_casillas"}
+       }     
+        
+    }
+]).toArray())
+
+//********** modelos
+
+//modelo de los premios
+{
+	sorteo:1,
+	idpremio:1,
+	listaFiguras: [33],
+	ganado:falso
+}
+
+//modelo de las figuras
+{
+	idFugura:32,//4 ESQUINAS
+	posiciones:[5,20,1,24],
+	"tachados" : {},
+    "ganadores" : [] 
+}
+
+//modelo tachados
+{
+	carton:null,
+	tachados:0
+}
+
+
+//********** colecciones
+cartones//todos los cartones mapeados
+vendidos//todos los cartones vendidos para el actual sorteo
+figura_juego//figuras que estan jugando actualmente
+figuras// todas las figuras 
+premios//premios que estan jugando actualmente
+
+//********** indices
+
+//indices cartones
+db.cartones.ensureIndex({"posicion" : 1}) 
+db.cartones.ensureIndex({"numero" : 1})
+
+//indices figuras
+db.figuras.ensureIndex({"nm_pk":1});
+
+//indice figuras_juego
+db.figura_juego.ensureIndex({"posiciones":1});
+
+//****************querys
+
+//retorna todos los cartones
+db.getCollection('cartones').find({})
+
+//retorna todos los cartones vendidos
+db.getCollection('vendidos').find({})
+
+//retorna todos los cartones venidos que tienen la balota tal
+
+
+//**************funciones
+
+	
+	
+function ventaModulo(carton){
+	db.cartones.find({carton: carton}).forEach(function(doc){
+	   db.vendidos.insert(doc); // start to replace
+	});
+
+}
+
+/**
+	agrega una figura que va a jugar en el sorteo
+	@param figuraId {integer} id de la figura que sera ingresada
+	@param premioId {integer} id del premio al que pertenece la figura
+	Nota: se asume que las figuras no se solapan y los premios no repiten figura
+**/
+function agregadFigura(figuraId,premioId){
+	
+	var figura = db.getCollection('figuras').findOne({nm_pk: figuraId});
+	figura.premioId= premioId;
+	
+	
+	db.getCollection('figura_juego').insert(figura);
+
+
+}
+
+/**
+	agrega una nueva balota
+	@param numer {integer} nueva balota
+	@return ganadores {array} array con los cartones ganadores
+**/
+function nuevaBalota(numer) {
+	var ini = new Date();
+	var tachados = [];
+
+	db.getCollection('cartones').aggregate({
+			$match: {
+				"numero" : numer
+			}
+		},
+		{
+			$group: {
+				_id: "$posicion",
+				tablas: { $addToSet: "$tabla" }
+			}
+		}).forEach(function (grupo) {
+			var posicion = grupo._id;
+            var tablas = grupo.tablas;			
+
+            var figura_juegos = db.getCollection('figura_juego')
+									.find({posiciones: posicion}).toArray();
+
+			if ((figura_juegos) && figura_juegos.length > 0) {
+				tablas.forEach(function (tabla) {
+					figura_juegos
+						.forEach(function(figura_juego){
+							//printjson(figura_juego);
+							//var tachados = figura_juego.tachados;
+							var casillas = figura_juego.casillas;
+							var idFigura = figura_juego.idFigura;
+
+							if(idFigura){
+								var nuevoTachado = {idFigura:idFigura, tabla:tabla, posicion: posicion,casillas:casillas};
+								tachados.push(nuevoTachado);
+							}else{
+								printjson(figura_juego);
+							}
+										
+																						
+					})	
+				});
+				
+
+			}				
+
+		});
+		db.tachados.insert(tachados);
+		var ganadores =	db.getCollection('tachados').aggregate([
+			//{ $match: { idFigura:32 } },
+			{
+				$group: {
+					_id: { tabla: "$tabla", idFigura: "$idFigura" },
+					cantidad:  { $sum: 1 },
+					fcasillas: { $max: "$casillas" }
+				}
+			},
+			{
+				$project:{
+					_id: 1,
+					cantidad : 1,
+					fcasillas: 1,
+					isGanador:{
+						$eq: ['$fcasillas','$cantidad']
+						}
+				}
+			},
+			/*{
+            	$sort: {"cantidad":-1}
+            }*/
+            {
+            	$match: {
+            		isGanador: true
+            	}
+            }
+		])
+		.toArray();
+    var fin = new Date();                   
+    print("termino"+(fin - ini));  
+}
+
+
+// query para detectar los ganadores
+db.getCollection('tachados').aggregate(
+		[
+		{
+			$group: {
+				_id: {tabla:"$tabla",idFigura:"$idFigura"},
+				cantidad:  { $sum: 1 },
+				fcasillas: { $max: "$casillas" }
+				
+			}
+		},{
+                        $project:{
+                                _id: 1,
+                                cantidad : 1,
+                                fcasillas: 1,
+                                isGanador:{
+                                        $eq: ['$fcasillas','$cantidad']
+                                    }
+                            
+                            }
+                   },
+                   {
+                       $match: {
+                            isGanador: true
+                           }
+                       }
+		]
+		
+)
